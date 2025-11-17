@@ -1,6 +1,6 @@
-# Zabbix Docker Monitoring (fork by run-as-daemon.ru)
+# Zabbix Docker monitoring module (run-as-daemon fork of monitoringartist/zabbix-docker-monitoring)
 
-Zabbix module, templates and Docker image for monitoring Docker, Kubernetes, Mesos, Swarm and other container platforms.
+C loadable module + templates for monitoring Docker and container environments with Zabbix.
 
 [English] | [Русский](README.ru.md)
 
@@ -10,7 +10,9 @@ Zabbix module, templates and Docker image for monitoring Docker, Kubernetes, Mes
 
 This project provides a high-performance **Zabbix Docker module** (C loadable module for Zabbix agent) combined with ready-to-use Zabbix templates and Docker integration for comprehensive container monitoring. It enables native collection of Docker container metrics—CPU, memory, block I/O, network, and status information—directly into Zabbix without the overhead of external scripts.
 
-**This is a fork of [monitoringartist/zabbix-docker-monitoring](https://github.com/monitoringartist/zabbix-docker-monitoring)**, maintained and adapted by **Ranas Mukminov** for production use in enterprise Zabbix environments.
+**This is a fork of [monitoringartist/zabbix-docker-monitoring](https://github.com/monitoringartist/zabbix-docker-monitoring)**, maintained and adapted by **Ranas Mukminov** (run-as-daemon.ru) for production use in enterprise Zabbix environments.
+
+This project was originally built for older Zabbix releases but is now intended for use with currently supported Zabbix branches (see [Supported Zabbix Versions](#supported-zabbix--os-updated-november-2025) below).
 
 Key benefits:
 - **Native performance**: Implemented as a compiled C module, delivering ~10x faster metric collection compared to UserParameter scripts
@@ -273,13 +275,37 @@ Access the dashboard in the [Grafana Zabbix Dashboards repository](https://githu
 
 **Note:** Grafana integration is optional. The module works fully within Zabbix alone; Grafana provides enhanced visualization capabilities.
 
-## Compatibility
+## Supported Zabbix / OS (Updated: November 2025)
 
-### Supported Zabbix Versions
+### Recommended Zabbix Versions
 
-Pre-built binaries are available for Zabbix agent versions: **4.0, 5.0, 5.4, 6.0**
+This module is recommended for use with currently supported Zabbix branches:
 
-### Supported Linux Distributions
+- **Zabbix 7.4** (latest stable)
+- **Zabbix 7.0 LTS** (long-term support)
+- **Zabbix 6.0 LTS** (long-term support)
+- Zabbix 7.2 (standard release, optional)
+
+**Legacy versions** (4.0, 5.0, 5.4) are out of official support and not recommended for production use. For current version lifecycle information, refer to:
+- https://www.zabbix.com/download
+- https://endoflife.date/zabbix
+
+Pre-built binaries are available for Zabbix agent versions: **4.0, 5.0, 5.4, 6.0** (see table below). For Zabbix 7.0 and 7.4, you can compile the module from source (see [Compilation](#compilation) section).
+
+### Recommended Linux Distributions
+
+Typical Linux targets tested with this module:
+- **Debian 12** (Bookworm)
+- **Ubuntu 22.04 LTS** (Jammy) / **Ubuntu 24.04 LTS** (Noble)
+- **Rocky Linux 9** / **AlmaLinux 9** / **RHEL 9**
+- **Docker Engine 23.x / 24.x**
+- **Docker Compose v2**
+
+For exact supported OS and database combinations, check official Zabbix documentation:
+- https://www.zabbix.com/download
+- https://www.zabbix.com/requirements
+
+### Pre-built Binary Downloads
 
 | Distribution | Zabbix 6.0 | Zabbix 5.4 | Zabbix 5.0 | Zabbix 4.0 |
 |--------------|:----------:|:----------:|:----------:|:----------:|
@@ -418,6 +444,184 @@ tail -f /var/log/zabbix/zabbix_agentd.log
 
 Module debug messages will include `[Docker]` prefix.
 
+## Relation to Official "Docker by Zabbix agent 2" Template
+
+Modern Zabbix releases (6.0+) ship with the official **"Docker by Zabbix agent 2"** template, which provides Docker monitoring capabilities using:
+- **Zabbix agent 2** (Go-based agent) with a built-in Docker plugin
+- No external scripts or modules required
+- Direct Docker API integration
+
+**Official integration page:** https://www.zabbix.com/integrations/docker
+
+### How This Module Compares
+
+This repository provides an **alternative Docker monitoring approach** via an external C module for the classic Zabbix agent (C agent). Consider using this module when:
+
+1. **You need additional or custom metrics** not available in the official template
+2. **You already use this module** in existing production environments and want to continue with it
+3. **You are migrating from legacy setups** and need compatibility with older Zabbix agent infrastructure
+4. **You prefer cgroup-based metrics** which offer ~10x faster collection compared to API-based methods
+5. **You work with specialized container platforms** like Mesos/Marathon/Chronos with specific templates
+
+For new Zabbix deployments (especially with Zabbix 7.0+), evaluate whether the official "Docker by Zabbix agent 2" template meets your needs first. Both approaches are valid and can coexist in different parts of your infrastructure.
+
+## Production Recommendations
+
+When deploying this module in production environments, follow these best practices:
+
+### Discovery and Item Frequency
+- Set appropriate discovery intervals (default: 60 seconds) based on container churn rate
+- For high-churn environments (frequent container creation/deletion), increase the interval to reduce load
+- Use macros to customize polling intervals per host or template
+
+### Performance Optimization
+- Prefer **cgroup-based metrics** (`docker.cpu`, `docker.mem`, `docker.dev`) over `docker.stats` for better performance
+- `docker.stats` calls take 0.3-0.7s each; use them sparingly or increase item intervals
+- Monitor Zabbix agent CPU and memory usage; adjust item intervals if the agent consumes excessive resources
+
+### Security
+- **Restrict Docker socket access**: Only grant the `zabbix` user access to the Docker group (avoid running agent as root when possible)
+- **SELinux/AppArmor**: Use the provided SELinux policy module or create appropriate AppArmor profiles
+- **Network isolation**: Keep Zabbix server and Docker hosts on separate networks with firewall rules
+- **Audit container labels**: Filter sensitive containers from discovery if needed
+
+### Architecture
+- **Separate monitoring**: Run Zabbix server and database on dedicated infrastructure, not on monitored Docker hosts
+- **Agent placement**: Deploy Zabbix agent on the Docker host (not inside containers) for accurate cgroup access
+- **Resource limits**: Set memory/CPU limits for containerized Zabbix agents (Dockbix agent XXL) to prevent resource exhaustion
+
+### Monitoring Scope
+- **Template assignment**: Link Docker templates only to hosts running Docker; avoid linking to non-Docker hosts
+- **Selective monitoring**: Use discovery filters to monitor only critical containers (avoid monitoring all system containers)
+- **Log monitoring**: Implement log monitoring selectively; Docker JSON logs can grow large
+
+### High Availability
+- Deploy multiple Zabbix proxies in distributed environments for failover
+- Use active checks for agents behind NAT or in dynamic environments
+- Monitor Zabbix agent availability with separate "ping" items
+
+### Maintenance
+- **Module updates**: Test module updates in staging before production deployment
+- **Zabbix upgrades**: When upgrading Zabbix, recompile the module against the new Zabbix version
+- **Template updates**: Review template changes before importing; backup existing templates
+
+## FAQ
+
+### How do I check if the module is loaded?
+
+Run this command on the host where Zabbix agent is running:
+
+```bash
+zabbix_agentd -p | grep docker.modver
+```
+
+If the module is loaded, you'll see output like:
+```
+docker.modver                                 [s|0.5]
+```
+
+Alternatively, check the Zabbix agent log (`/var/log/zabbix/zabbix_agentd.log`) for module loading messages.
+
+### Why are no containers discovered?
+
+Common causes and solutions:
+
+1. **Docker permissions**: The `zabbix` user must have access to the Docker socket
+   ```bash
+   # Add zabbix to docker group
+   sudo usermod -aG docker zabbix
+   sudo systemctl restart zabbix-agent
+
+   # Verify access
+   sudo -u zabbix docker ps
+   ```
+
+2. **Module not loaded**: Verify the module is loaded (see question above)
+
+3. **No running containers**: Discovery only finds running containers; start at least one container
+
+4. **Discovery rule disabled**: Check that the discovery rule "Docker containers" is enabled in the linked template
+
+5. **Discovery interval**: Wait for the next discovery cycle (default: 60 seconds)
+
+### Can I use this together with the official "Docker by Zabbix agent 2" template?
+
+Yes, but not on the same host with the same agent. You have two options:
+
+1. **Different hosts**: Use this module (with Zabbix agent C) on some Docker hosts and the official template (with Zabbix agent 2) on other hosts
+2. **Different metrics**: If you run both agents on the same host (possible but uncommon), configure different ports and use different templates
+
+In most cases, choose one approach per host to avoid duplicate metrics and confusion.
+
+### How do I monitor containers in Kubernetes?
+
+This module can monitor Docker containers on Kubernetes nodes:
+
+1. **Node-level deployment**: Run Zabbix agent (with this module) directly on each Kubernetes worker node (not as a pod)
+2. **DaemonSet approach** (advanced): Deploy Zabbix agent as a Kubernetes DaemonSet with:
+   - `hostNetwork: true`
+   - `privileged: true`
+   - Volume mount for `/var/run/docker.sock` (if using Docker runtime)
+   - Volume mount for `/sys/fs/cgroup`
+
+**Note**: If your Kubernetes cluster uses containerd or CRI-O (instead of Docker), this module won't work directly. Consider using Kubernetes-native monitoring tools or Zabbix's Kubernetes templates instead.
+
+### Which metrics are fastest to collect?
+
+Performance ranking (fastest to slowest):
+
+1. **`docker.up[cid]`** - Fastest (simple cgroup check)
+2. **`docker.cpu[cid,metric]`** - Fast (cgroup read)
+3. **`docker.mem[cid,metric]`** - Fast (cgroup read)
+4. **`docker.dev[cid,file,metric]`** - Fast (cgroup read)
+5. **`docker.discovery`** - Medium (Docker API call)
+6. **`docker.inspect[cid,...]`** - Medium (Docker API call)
+7. **`docker.stats[cid,...]`** - Slow (0.3-0.7s per container, real-time streaming)
+
+For best performance, prioritize cgroup-based metrics over `docker.stats`.
+
+### How do I upgrade to a newer Zabbix version?
+
+When upgrading Zabbix:
+
+1. **Upgrade Zabbix server and database** first (follow official Zabbix upgrade guide)
+2. **Upgrade Zabbix agent** on Docker hosts
+3. **Recompile the module** for the new Zabbix version:
+   - Download the new Zabbix source (matching your new version)
+   - Compile the module following the [Compilation](#compilation) section
+4. **Replace the old module** with the new `.so` file
+5. **Restart Zabbix agent**:
+   ```bash
+   sudo systemctl restart zabbix-agent
+   ```
+6. **Verify** the module loads correctly
+
+**Pre-built binaries** may not be available for the latest Zabbix versions immediately; be prepared to compile from source.
+
+### What if I get "Unsupported item key" errors?
+
+Causes and solutions:
+
+1. **Module not loaded**: Verify with `zabbix_agentd -p | grep docker`
+2. **Wrong Zabbix version**: Ensure module is compiled for your exact Zabbix version
+3. **Typo in item key**: Check item key syntax (e.g., `docker.cpu[cid,user]` not `docker.cpu[cid user]`)
+4. **Container ID format**: For short IDs and names, prefix with `/` (e.g., `/zabbix-server`)
+
+### Does this work with Podman?
+
+Partially. Podman provides Docker-compatible socket API, so some features may work:
+
+1. **Enable Podman socket**:
+   ```bash
+   systemctl enable --now podman.socket
+   ```
+2. **Create Docker socket symlink**:
+   ```bash
+   ln -s /run/podman/podman.sock /var/run/docker.sock
+   ```
+
+However, **cgroup paths differ** between Docker and Podman, so cgroup-based metrics may not work correctly. This module is primarily designed for Docker; Podman support is experimental.
+
 ## Compilation
 
 If pre-built binaries don't work for your system, compile the module from source.
@@ -529,13 +733,18 @@ Contributions are welcome! Please:
 
 For bugs and feature requests, use the [GitHub issue tracker](https://github.com/ranas-mukminov/zabbix-docker-monitoring/issues).
 
-## Fork Maintainer & Support
+## Support and Services by run-as-daemon.ru
 
-This fork is maintained by **Ranas Mukminov** and actively used in production Zabbix environments for monitoring Docker and Kubernetes infrastructure.
+This fork is maintained by **Ranas Mukminov** (run-as-daemon.ru) and actively used in production Zabbix environments for monitoring Docker and Kubernetes infrastructure.
 
-**Ranas Mukminov** specializes in enterprise monitoring solutions, Zabbix consulting, and DevOps automation. This fork includes additional improvements, updates, and adaptations based on real-world production experience.
+If you need help with production Zabbix/Docker/Grafana monitoring, high availability design, backup strategy, or incident response, you can reach out via: **[run-as-daemon.ru](https://run-as-daemon.ru)**
 
-For professional monitoring consulting, Zabbix implementation, or custom development: [run-as-daemon.ru](https://run-as-daemon.ru)
+Services offered:
+- Zabbix deployment and configuration consulting
+- Docker/Kubernetes monitoring solutions
+- Grafana dashboard development
+- Performance optimization and troubleshooting
+- Custom module development and integration
 
 ## License
 
