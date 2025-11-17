@@ -1,6 +1,13 @@
 /*
-** Zabbix module for Docker container monitoring
+** ============================================================================
+** Zabbix Docker Monitoring Module
+** ============================================================================
+**
+** High-performance C loadable module for Zabbix agent that enables
+** comprehensive monitoring of Docker containers without external scripts.
+**
 ** Copyright (C) 2014-2017 Jan Garaj - www.monitoringartist.com
+** Fork maintained by: run-as-daemon.ru
 **
 ** This program is free software; you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
@@ -15,6 +22,76 @@
 ** You should have received a copy of the GNU General Public License
 ** along with this program; if not, write to the Free Software
 ** Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+**
+** ============================================================================
+** ARCHITECTURE OVERVIEW
+** ============================================================================
+**
+** This module provides two data collection methods:
+**
+** 1. CGROUP-BASED METRICS (Fast, ~0.01s per call)
+**    - Reads directly from Linux cgroup filesystem (/sys/fs/cgroup/)
+**    - Used for: CPU, memory, block I/O metrics
+**    - Requires: cgroup filesystem mounted (standard on Linux with Docker)
+**    - Item keys: docker.cpu[], docker.mem[], docker.dev[], docker.up[]
+**
+** 2. DOCKER API METRICS (Slower, ~0.3-0.7s per call)
+**    - Communicates with Docker via Unix socket (/var/run/docker.sock)
+**    - Used for: Container discovery, metadata, stats, system info
+**    - Requires: Zabbix agent user in 'docker' group OR AllowRoot=1
+**    - Item keys: docker.discovery[], docker.inspect[], docker.stats[],
+**                 docker.info[], docker.cstatus[], docker.istatus[], docker.vstatus[]
+**
+** ============================================================================
+** SUPPORTED ITEM KEYS
+** ============================================================================
+**
+** Discovery:
+**   docker.discovery[<filter_params>]      - Container LLD (Low-Level Discovery)
+**   docker.port.discovery[cid,<protocol>]  - Container port discovery
+**
+** Resource Metrics (cgroup-based, fast):
+**   docker.cpu[cid,metric]    - CPU usage from cpuacct.stat (system, user, total, etc.)
+**   docker.mem[cid,metric]    - Memory metrics from memory.stat (rss, cache, swap, etc.)
+**   docker.dev[cid,file,metric] - Block I/O from blkio.* files
+**   docker.xnet[cid,iface,metric] - Network metrics (experimental, requires root)
+**   docker.up[cid]            - Container running state (1=up, 0=down)
+**
+** Metadata & Stats (Docker API-based, slower):
+**   docker.inspect[cid,param...] - Container inspection data (Config, NetworkSettings, etc.)
+**   docker.stats[cid,param...]   - Real-time resource stats from Docker API
+**   docker.info[param]           - Docker system information
+**
+** Status Counts:
+**   docker.cstatus[status]  - Container count by status (All, Up, Exited, Crashed, Paused)
+**   docker.istatus[status]  - Image count by status (All, Dangling)
+**   docker.vstatus[status]  - Volume count by status (All, Dangling)
+**
+** Module Information:
+**   docker.modver  - Module version string
+**
+** ============================================================================
+** DEPENDENCIES
+** ============================================================================
+**
+** - Zabbix agent headers (from Zabbix source tree)
+** - libpcre (PCRE library for regular expressions)
+** - libjansson (JSON parsing for Docker API responses)
+** - Linux kernel with cgroup support
+** - Docker daemon with accessible Unix socket
+**
+** ============================================================================
+** COMPILATION
+** ============================================================================
+**
+** Requires Zabbix source tree configured with --enable-agent:
+**
+**   cd /path/to/zabbix/src/modules/zabbix_module_docker
+**   make
+**
+** Output: zabbix_module_docker.so (dynamically linked shared object)
+**
+** ============================================================================
 **/
 
 #include "common.h"

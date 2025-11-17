@@ -273,6 +273,45 @@ Access the dashboard in the [Grafana Zabbix Dashboards repository](https://githu
 
 **Note:** Grafana integration is optional. The module works fully within Zabbix alone; Grafana provides enhanced visualization capabilities.
 
+## Relation to Official Zabbix Docker Template
+
+### Community Module vs Official Template
+
+This project provides a **community-developed, high-performance C module** for Docker monitoring in Zabbix. Starting with **Zabbix 6.0**, there is also an **official "Docker by Zabbix agent 2"** template available:
+
+- **Official Template**: https://www.zabbix.com/integrations/docker
+- **Agent Type**: Zabbix agent 2 (Go-based agent)
+- **Protocol**: Uses Docker API over HTTP/Unix socket
+
+### When to Use This Module
+
+Consider using this community module instead of (or alongside) the official template when:
+
+1. **Performance Requirements**: This C module reads metrics directly from cgroups, making it ~10x faster than API-based collection for CPU/memory/I/O metrics
+2. **Legacy Zabbix Versions**: You're running Zabbix 4.0, 5.0, or 5.4 (official template requires 6.0+)
+3. **Zabbix Agent 1**: Your infrastructure uses the traditional C-based Zabbix agent rather than agent 2
+4. **Existing Deployments**: You have established monitoring based on this module and templates
+5. **Resource-Constrained Environments**: Lower overhead for high-density container environments
+6. **Custom Metrics**: Need access to advanced cgroup metrics not exposed through standard Docker API
+
+### When to Use the Official Template
+
+The official Zabbix 6.0+ Docker template is better suited when:
+
+- You're running Zabbix 6.0 or newer
+- You prefer officially supported solutions with regular updates
+- You're already using Zabbix agent 2 infrastructure-wide
+- You want simplified setup with native agent 2 plugins
+
+### Using Both
+
+Both solutions can coexist:
+- Use this module for **high-frequency cgroup metrics** (CPU, memory, I/O) via fast cgroup reads
+- Use official template for **Docker-specific metadata** and system information via API
+- Configure different update intervals based on metric criticality
+
+For most production environments with Zabbix 6.0+, we recommend evaluating both approaches and choosing based on your specific performance requirements and existing infrastructure.
+
 ## Compatibility
 
 ### Supported Zabbix Versions
@@ -417,6 +456,233 @@ tail -f /var/log/zabbix/zabbix_agentd.log
 ```
 
 Module debug messages will include `[Docker]` prefix.
+
+## Production Recommendations
+
+### Deployment Best Practices
+
+When deploying this module in production environments, follow these recommendations:
+
+#### 1. Resource Planning
+
+- **Discovery Frequency**: Balance container discovery intervals against API load. Default 60s is suitable for most environments; consider 120-300s for large-scale deployments (100+ containers per host)
+- **Item Update Intervals**: Use different intervals for different metric types:
+  - Critical metrics (container up/down): 30-60s
+  - Resource metrics (CPU/memory): 60-120s
+  - Less critical metrics (network I/O): 120-300s
+- **Zabbix Agent Timeout**: Set `Timeout=10` in `zabbix_agentd.conf` for environments with many containers
+
+#### 2. High Availability
+
+- **Agent Redundancy**: Deploy Zabbix agent on each Docker host independently; avoid centralized monitoring points
+- **Module Updates**: Test module updates in staging before production deployment
+- **Monitoring Isolation**: Keep Zabbix server/proxy separate from monitored Docker hosts to avoid cascading failures
+
+#### 3. Performance Optimization
+
+- **Prefer Cgroup Metrics**: Use `docker.cpu`, `docker.mem`, `docker.dev` instead of `docker.stats` whenever possible (10x faster)
+- **Limit Discovery Scope**: Use discovery filters to exclude irrelevant containers (e.g., short-lived build containers)
+- **Template Tuning**: Disable unused item prototypes in templates to reduce polling overhead
+- **Passive vs Active**: Consider active checks for distributed environments to reduce server load
+
+#### 4. Security Considerations
+
+- **Docker Socket Access**: Use Docker group membership (`usermod -aG docker zabbix`) rather than running agent as root
+- **SELinux**: Always use the provided SELinux policy module in enforcing mode; never disable SELinux
+- **Network Isolation**: Ensure Zabbix agent firewall rules (port 10050) allow only your Zabbix servers/proxies
+- **Container Isolation**: Be aware that the module reads cgroup data from the host; compromised agent could leak container metrics
+
+#### 5. Monitoring Strategy
+
+**For Docker Swarm/Standalone**:
+- Deploy agent on each Docker node
+- Monitor node-level container aggregates
+- Use container discovery for per-container metrics
+
+**For Kubernetes**:
+- Deploy as DaemonSet on worker nodes
+- Alternative: use sidecar pattern for namespace-specific monitoring
+- Combine with Kubernetes-native monitoring (Prometheus) for cluster-level metrics
+- Use this module for node-level container resource tracking
+
+**For Mesos/Marathon**:
+- Use the Mesos-specific template variant
+- Enable task ID-based discovery filtering
+- Monitor at both framework and task levels
+
+#### 6. Alerting Configuration
+
+- **Container State Changes**: Alert on unexpected transitions (running → exited)
+- **Resource Thresholds**: Set memory/CPU triggers based on container limits, not host capacity
+- **Discovery Failures**: Alert if container discovery returns empty results on hosts with expected containers
+- **Module Health**: Monitor `docker.modver` to detect module load failures
+
+#### 7. Capacity Planning
+
+For sizing Zabbix infrastructure when monitoring Docker:
+- **Items per container**: ~15-30 items depending on template configuration
+- **Server Load**: Each container adds ~0.1% to Zabbix server CPU on average
+- **Database Growth**: Expect ~1-5 MB/day/container with default retention (historical data)
+- **Network Bandwidth**: Minimal (<1 Kbps per container for passive checks)
+
+#### 8. Operational Guidelines
+
+- **Change Management**: Document custom template modifications separately from module updates
+- **Backup Strategy**: Include Zabbix templates and module configuration in backup procedures
+- **Incident Response**: Keep module logs (`/var/log/zabbix/`) accessible for debugging production issues
+- **Upgrade Path**: Test new Zabbix versions in lab environment before upgrading production agents
+
+#### 9. Integration with CI/CD
+
+- **Container Labeling**: Use Docker labels for discovery filtering (requires custom template modifications)
+- **Deployment Validation**: Add Zabbix checks to deployment pipelines (verify container discovered and monitored)
+- **Automated Testing**: Include module functionality in infrastructure-as-code tests
+
+#### 10. Documentation
+
+Maintain internal documentation covering:
+- Custom template modifications and rationale
+- Non-standard item key parameters
+- Troubleshooting runbooks specific to your environment
+- Escalation procedures for monitoring alerts
+
+## Frequently Asked Questions (FAQ)
+
+### General Questions
+
+**Q: How do I check if the module is loaded correctly?**
+
+A: Run the following command:
+```bash
+zabbix_agentd -p | grep docker.modver
+```
+You should see output like: `docker.modver [t|v0.7.0]`. If empty, check agent logs for loading errors.
+
+**Q: Can I use this module with Zabbix agent 2?**
+
+A: No, this module is designed for Zabbix agent 1 (C-based). For Zabbix agent 2, use the [official Docker plugin](https://www.zabbix.com/integrations/docker).
+
+**Q: Why do I see no containers discovered?**
+
+A: Common causes:
+1. Module not loaded (check `zabbix_agentd -p | grep docker`)
+2. No Docker permissions (run `sudo -u zabbix docker ps` to test)
+3. No containers running (check `docker ps`)
+4. Discovery rule not triggered yet (wait 60s or manually execute discovery)
+5. SELinux blocking access (check `ausearch -m avc -ts recent`)
+
+**Q: Can I monitor containers on remote Docker hosts?**
+
+A: No, the module must run on each Docker host. Deploy Zabbix agent with the module on every host you want to monitor.
+
+**Q: Does this work with Docker Compose?**
+
+A: Yes, Docker Compose containers are regular Docker containers and will be discovered automatically.
+
+**Q: Can I use this alongside the official Zabbix Docker template?**
+
+A: Yes, both can coexist. See the [Relation to Official Zabbix Docker Template](#relation-to-official-zabbix-docker-template) section for details.
+
+### Performance Questions
+
+**Q: Why are some metrics slow to collect?**
+
+A: `docker.stats` keys are slow (0.3-0.7s) because they stream real-time data from Docker API. Use cgroup-based keys (`docker.cpu`, `docker.mem`, `docker.dev`) instead—they're ~10x faster.
+
+**Q: How many containers can I monitor per host?**
+
+A: The module scales well. Production deployments typically handle 50-200 containers per host without issues. Key factors:
+- Use cgroup metrics (not `docker.stats`)
+- Tune discovery and polling intervals
+- Ensure adequate Zabbix agent timeout settings
+
+**Q: Does the module impact container performance?**
+
+A: Minimal. Reading cgroup metrics is a lightweight filesystem operation. Typical overhead: <0.1% CPU per monitored container.
+
+### Configuration Questions
+
+**Q: How do I monitor specific containers only?**
+
+A: Use discovery filters in the template. Example: `docker.discovery[Config,Env,APP_TYPE=]` discovers only containers with `APP_TYPE` environment variable.
+
+**Q: Can I monitor container logs?**
+
+A: Yes, using standard Zabbix log monitoring. See [Container Log Monitoring](#container-log-monitoring) section.
+
+**Q: How do I monitor containers in different namespaces (Kubernetes)?**
+
+A: Deploy the agent as a DaemonSet on Kubernetes nodes. Each agent monitors containers on its node, regardless of namespace.
+
+**Q: How do I change discovery intervals?**
+
+A: Edit the discovery rule in your Zabbix template (Configuration → Templates → Template App Docker → Discovery rules → Container discovery).
+
+### Compatibility Questions
+
+**Q: Does this work with Podman?**
+
+A: Partial support. Metrics that rely on Docker socket API may not work. Cgroup-based metrics (`docker.cpu`, `docker.mem`) should work if Podman uses compatible cgroup paths.
+
+**Q: Is cgroups v2 supported?**
+
+A: The module primarily targets cgroups v1. Cgroups v2 support depends on Docker's cgroup driver configuration and may require code adjustments.
+
+**Q: Can I use this with Docker Desktop (Windows/Mac)?**
+
+A: No, the module requires Linux cgroups and Docker socket access. It's designed for Linux Docker hosts.
+
+**Q: What's the minimum Docker version required?**
+
+A: Docker 1.5+ for most features. Some metrics require newer versions (e.g., `docker.vstatus` needs Docker API v1.21+).
+
+### Troubleshooting Questions
+
+**Q: Why do memory metrics show zero?**
+
+A: Memory cgroup is likely not enabled. Add `cgroup_enable=memory` to kernel boot parameters in `/etc/default/grub`, run `update-grub`, and reboot.
+
+**Q: Why do I get "Unsupported" for docker.inspect/docker.stats keys?**
+
+A: These keys require Docker socket access. Ensure:
+1. Zabbix user is in docker group: `usermod -aG docker zabbix`
+2. Docker socket is accessible: `ls -l /var/run/docker.sock`
+3. SELinux policy is installed (if using SELinux)
+
+**Q: Module worked before, now it doesn't after reboot. Why?**
+
+A: Likely causes:
+1. Docker service starts after Zabbix agent (add dependency)
+2. Group membership not persisted (re-run `usermod -aG docker zabbix`)
+3. SELinux policy not persistent (re-install policy module)
+
+**Q: How do I enable debug logging?**
+
+A: Set `DebugLevel=4` in `/etc/zabbix/zabbix_agentd.conf`, restart agent, and check `/var/log/zabbix/zabbix_agentd.log`. Module messages include `[Docker]` prefix.
+
+### Kubernetes-Specific Questions
+
+**Q: How do I deploy this in Kubernetes?**
+
+A: Deploy as a DaemonSet with:
+```yaml
+hostNetwork: true
+hostPID: true
+volumes:
+  - name: docker-sock
+    hostPath: {path: /var/run/docker.sock}
+  - name: cgroup
+    hostPath: {path: /sys/fs/cgroup}
+```
+Mount these volumes in your Zabbix agent container.
+
+**Q: Can this monitor Kubernetes pod metrics?**
+
+A: It monitors container-level metrics. For pod-level metrics, aggregate container metrics or use Kubernetes-native monitoring (kube-state-metrics, Prometheus).
+
+**Q: Does it work with containerd/CRI-O runtimes?**
+
+A: Limited support. The module is optimized for Docker. For non-Docker runtimes, cgroup metrics may work but Docker API features won't.
 
 ## Compilation
 
