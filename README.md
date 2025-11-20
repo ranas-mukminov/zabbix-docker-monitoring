@@ -325,7 +325,7 @@ For exact supported OS and database combinations, check official Zabbix document
 | Ubuntu 16.04 | [Download](https://github.com/monitoringartist/zabbix-docker-monitoring/raw/gh-pages/ubuntu16/6.0/zabbix_module_docker.so) | [Download](https://github.com/monitoringartist/zabbix-docker-monitoring/raw/gh-pages/ubuntu16/5.4/zabbix_module_docker.so) | [Download](https://github.com/monitoringartist/zabbix-docker-monitoring/raw/gh-pages/ubuntu16/5.0/zabbix_module_docker.so) | [Download](https://github.com/monitoringartist/zabbix-docker-monitoring/raw/gh-pages/ubuntu16/4.0/zabbix_module_docker.so) |
 | Ubuntu 14.04 | [Download](https://github.com/monitoringartist/zabbix-docker-monitoring/raw/gh-pages/ubuntu14/6.0/zabbix_module_docker.so) | [Download](https://github.com/monitoringartist/zabbix-docker-monitoring/raw/gh-pages/ubuntu14/5.4/zabbix_module_docker.so) | [Download](https://github.com/monitoringartist/zabbix-docker-monitoring/raw/gh-pages/ubuntu14/5.0/zabbix_module_docker.so) | [Download](https://github.com/monitoringartist/zabbix-docker-monitoring/raw/gh-pages/ubuntu14/4.0/zabbix_module_docker.so) |
 
-**Note:** For newer Zabbix versions or distributions not listed, you can compile the module from source. See [Compilation](#compilation).
+**Note:** This fork's CI now builds and tests against Zabbix **7.4**, **7.2**, **7.0 LTS**, and **6.0 LTS**. Pre-built binaries for these modern versions will be available soon. For older versions (4.0-5.4) or distributions not listed, you can compile the module from source. See [Compilation](#compilation).
 
 ## Additional Docker Permissions
 
