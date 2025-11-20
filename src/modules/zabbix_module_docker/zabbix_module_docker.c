@@ -22,6 +22,7 @@
 #include "zbxcomms.h"
 #include "module.h"
 #include "zbxregexp.h"
+#include "zbxstr.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -77,7 +78,7 @@ static ZBX_METRIC keys[] =
         {"docker.cpu",  CF_HAVEPARAMS,  zbx_module_docker_cpu,  "full container id, cpu metric name"},
         {"docker.xnet", CF_HAVEPARAMS,  zbx_module_docker_net,  "full container id, interface, network metric name"},
         {"docker.dev",  CF_HAVEPARAMS,  zbx_module_docker_dev,  "full container id, blkio file, blkio metric name"},
-        {"docker.modver",  CF_HAVEPARAMS,  zbx_module_docker_modver},
+        {"docker.modver",  CF_HAVEPARAMS,  zbx_module_docker_modver,  NULL},
         {NULL}
 };
 
