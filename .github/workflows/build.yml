@@ -12,8 +12,13 @@ on:
 
 jobs:
   test:
-    name: CI tests
-    runs-on: ubuntu-latest
+    name: Test Zabbix ${{ matrix.zabbix-version }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        zabbix-version: ['release/7.4', 'release/7.2', 'release/7.0', 'release/6.0']
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,14 +36,28 @@ jobs:
          sudo ln -snf /usr/share/zoneinfo/UTC /etc/localtime
          sudo apt-get -qq --assume-yes install git automake autoconf gcc make pkg-config libpcre3-dev libjansson-dev
 
+      - name: Cache Zabbix Source
+        id: cache-zabbix
+        uses: actions/cache@v3
+        with:
+          path: ~/zabbix
+          key: ${{ runner.os }}-zabbix-${{ matrix.zabbix-version }}
+
       - name: Build Zabbix binaries
+        if: steps.cache-zabbix.outputs.cache-hit != 'true'
         run: |
-          ZABBIX_VERSION=release/7.0
+          ZABBIX_VERSION=${{ matrix.zabbix-version }}
           git clone -b ${ZABBIX_VERSION} --depth 1 https://github.com/zabbix/zabbix.git ~/zabbix
           cd ~/zabbix/
           ./bootstrap.sh 1>/dev/null
           ./configure --enable-agent 1>/dev/null
-          make
+          make -j$(nproc)
+          sudo make install
+
+      - name: Install Zabbix binaries (from cache)
+        if: steps.cache-zabbix.outputs.cache-hit == 'true'
+        run: |
+          cd ~/zabbix/
           sudo make install
           zabbix_agentd --version
 
@@ -48,6 +67,13 @@ jobs:
           cd ~/zabbix/src/modules/zabbix_module_docker
           make
           cp zabbix_module_docker.so /tmp
+          
+      - name: Verify Module Load
+        run: |
+          # Create minimal config for testing module load
+          echo "LoadModulePath=/tmp" > /tmp/zabbix_test.conf
+          echo "LoadModule=zabbix_module_docker.so" >> /tmp/zabbix_test.conf
+          zabbix_agentd -c /tmp/zabbix_test.conf -t docker.modver
 
       - name: Run Zabbix Agent with Docker module
         run: |
@@ -60,86 +86,72 @@ jobs:
         run: |
           NEED="testcontainer"
           RESP=$(zabbix_get -s 127.0.0.1 -k docker.discovery)
-          if [[ ${RESP} != *${NEED}* ]]; then echo $RESP; exit 1; fi
-          echo $RESP
+          if [[ ${RESP} != *${NEED}* ]]; then echo "FAIL: $RESP"; exit 1; fi
+          echo "PASS: $RESP"
 
       - name: Test discovery 2 - zabbix_get -s 127.0.0.1 -k docker.discovery[Config,Env,ENV=]
         run: |
           NEED="env"
           RESP=$(zabbix_get -s 127.0.0.1 -k docker.discovery[Config,Env,ENV=])
-          if [[ ${RESP} != *${NEED}* ]]; then echo $RESP; exit 1; fi
-          echo $RESP
+          if [[ ${RESP} != *${NEED}* ]]; then echo "FAIL: $RESP"; exit 1; fi
+          echo "PASS: $RESP"
 
       - name: Test cpu - zabbix_get -s 127.0.0.1 -k docker.cpu[/testcontainer,system]
         run: |
           RESP=$(zabbix_get -s 127.0.0.1 -k docker.cpu[/testcontainer,system])
-          echo $RESP
+          if [[ -z "$RESP" ]]; then echo "FAIL: Empty response"; exit 1; fi
+          echo "PASS: $RESP"
 
       - name: Test mem - zabbix_get -s 127.0.0.1 -k docker.mem[/testcontainer,rss]
         run: |
           RESP=$(zabbix_get -s 127.0.0.1 -k docker.mem[/testcontainer,rss])
-          echo $RESP
+          if [[ -z "$RESP" ]]; then echo "FAIL: Empty response"; exit 1; fi
+          echo "PASS: $RESP"
 
       - name: Test up - zabbix_get -s 127.0.0.1 -k docker.up[/testcontainer]
         run: |
           RESP=$(zabbix_get -s 127.0.0.1 -k docker.up[/testcontainer])
-          echo $RESP
+          if [[ "$RESP" != "1" ]]; then echo "FAIL: Expected 1, got $RESP"; exit 1; fi
+          echo "PASS: $RESP"
 
       - name: Test cstatus - zabbix_get -s 127.0.0.1 -k docker.cstatus[All]
         run: |
           NEED='^[0-9]+$'
           RESP=$(zabbix_get -s 127.0.0.1 -k docker.cstatus[All])
-          if ! [[ ${RESP} =~ ${NEED} ]]; then echo $RESP; exit 1; fi
-          echo $RESP
+          if ! [[ ${RESP} =~ ${NEED} ]]; then echo "FAIL: $RESP"; exit 1; fi
+          echo "PASS: $RESP"
 
       - name: Test istatus - zabbix_get -s 127.0.0.1 -k docker.istatus[All]
         run: |
           NEED='^[0-9]+$'
           RESP=$(zabbix_get -s 127.0.0.1 -k docker.istatus[All])
-          if ! [[ ${RESP} =~ ${NEED} ]]; then echo $RESP; exit 1; fi
-          echo $RESP
+          if ! [[ ${RESP} =~ ${NEED} ]]; then echo "FAIL: $RESP"; exit 1; fi
+          echo "PASS: $RESP"
 
       - name: Test vstatus - zabbix_get -s 127.0.0.1 -k docker.vstatus[All]
         run: |
           NEED='^[0-9]+$'
           RESP=$(zabbix_get -s 127.0.0.1 -k docker.vstatus[All])
-          if ! [[ ${RESP} =~ ${NEED} ]]; then echo $RESP; exit 1; fi
-          echo $RESP
+          if ! [[ ${RESP} =~ ${NEED} ]]; then echo "FAIL: $RESP"; exit 1; fi
+          echo "PASS: $RESP"
 
       - name: Test modver - zabbix_get -s 127.0.0.1 -k docker.modver
         run: |
           RESP=$(zabbix_get -s 127.0.0.1 -k docker.modver)
-          echo $RESP
+          echo "PASS: $RESP"
 
       - name: Zabbix agent logs
+        if: always()
         run: cat /tmp/zabbix_agentd.log
-
-      - name: Cgroups structure /sys/fs/cgroup/
-        run: find /sys/fs/cgroup/ -type f
-
-      - name: Cgroups list /proc/cgroups
-        run: cat /proc/cgroups
-
-      - name: /proc/cmdline
-        run: cat /proc/cmdline
-
-      - name: cgroup versions
-        run: grep cgroup /proc/filesystems
-
-      - name: cgroup kernel config
-        run: cat /boot/config-* | grep CGROUP | grep -v ^#
-
-      - name: mounted cgroups
-        run: mount | grep cgroup     
 
       - name: Docker info
         run: sudo docker info
 
   build:
-    name: Build binaries
+    name: Build Release Binaries
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -169,5 +181,6 @@ jobs:
         uses: EndBug/add-and-commit@v9
         with:
           branch: gh-pages
-          message: 'Binaries update by GitHub Action (Zabbix 7.0 LTS)'
+          message: 'Binaries update by GitHub Action (Zabbix 7.4/7.2/7.0/6.0)'
+
 
