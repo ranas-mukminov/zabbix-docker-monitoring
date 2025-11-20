@@ -17,10 +17,29 @@
 ** Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 **/
 
+/* Detect Zabbix version by checking for zbxcommon.h (Zabbix 7.0+) vs common.h (older) */
+#if defined(__has_include)
+#  if __has_include("zbxcommon.h")
+#    define ZABBIX_7_OR_NEWER 1
+#  endif
+#endif
+
+#include "module.h"
+
+/* Zabbix 7.0+ uses zbx-prefixed headers, older versions use shorter names */
+#ifdef ZABBIX_7_OR_NEWER
 #include "zbxcommon.h"
 #include "zbxlog.h"
 #include "zbxcomms.h"
-#include "module.h"
+#include "zbxstr.h"
+/* Zabbix 7.0 renamed string_replace to zbx_string_replace */
+#define string_replace zbx_string_replace
+#else
+#include "common.h"
+#include "log.h"
+#include "comms.h"
+/* Zabbix 6.0 and earlier have string_replace in common.h */
+#endif
 #include "zbxregexp.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -77,7 +96,7 @@ static ZBX_METRIC keys[] =
         {"docker.cpu",  CF_HAVEPARAMS,  zbx_module_docker_cpu,  "full container id, cpu metric name"},
         {"docker.xnet", CF_HAVEPARAMS,  zbx_module_docker_net,  "full container id, interface, network metric name"},
         {"docker.dev",  CF_HAVEPARAMS,  zbx_module_docker_dev,  "full container id, blkio file, blkio metric name"},
-        {"docker.modver",  CF_HAVEPARAMS,  zbx_module_docker_modver},
+        {"docker.modver",  CF_HAVEPARAMS,  zbx_module_docker_modver,  NULL},
         {NULL}
 };
 
@@ -122,56 +141,6 @@ void    zbx_module_item_timeout(int timeout)
  * Return value: list of item keys                                            *
  *                                                                            *
  ******************************************************************************/
-/******************************************************************************
- *                                                                            *
- * Function: string_replace                                                   *
- *                                                                            *
- * Purpose: replace all occurrences of substr with replacement in string     *
- *                                                                            *
- * Return value: newly allocated string with replacements made               *
- *                                                                            *
- ******************************************************************************/
-static char *string_replace(const char *string, const char *substr, const char *replacement)
-{
-	char *result, *p;
-	size_t len_substr = strlen(substr);
-	size_t len_replacement = strlen(replacement);
-	size_t count = 0, result_size;
-	const char *tmp = string;
-
-	/* Count occurrences of substr */
-	while ((tmp = strstr(tmp, substr)) != NULL)
-	{
-		count++;
-		tmp += len_substr;
-	}
-
-	/* Allocate result buffer */
-	result_size = strlen(string) + count * (len_replacement - len_substr) + 1;
-	result = malloc(result_size);
-	if (result == NULL)
-		return NULL;
-
-	/* Perform replacement */
-	p = result;
-	while (*string)
-	{
-		if (strncmp(string, substr, len_substr) == 0)
-		{
-			memcpy(p, replacement, len_replacement);
-			p += len_replacement;
-			string += len_substr;
-		}
-		else
-		{
-			*p++ = *string++;
-		}
-	}
-	*p = '\0';
-
-	return result;
-}
-
 ZBX_METRIC      *zbx_module_item_list()
 {
         zabbix_log(LOG_LEVEL_DEBUG, "In zbx_module_item_list()");
