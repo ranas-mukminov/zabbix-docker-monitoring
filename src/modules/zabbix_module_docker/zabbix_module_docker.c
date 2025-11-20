@@ -17,11 +17,10 @@
 ** Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 **/
 
-#include "common.h"
-#include "log.h"
-#include "comms.h"
+#include "zbxcommon.h"
+#include "zbxlog.h"
+#include "zbxcomms.h"
 #include "module.h"
-#include "sysinc.h"
 #include "zbxregexp.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,7 +33,7 @@
 #include <jansson.h>
 
 #ifndef ZBX_MODULE_API_VERSION
-#       define ZBX_MODULE_API_VERSION   ZBX_MODULE_API_VERSION_ONE
+#       define ZBX_MODULE_API_VERSION   2
 #endif
 
 struct inspect_result
@@ -123,6 +122,56 @@ void    zbx_module_item_timeout(int timeout)
  * Return value: list of item keys                                            *
  *                                                                            *
  ******************************************************************************/
+/******************************************************************************
+ *                                                                            *
+ * Function: string_replace                                                   *
+ *                                                                            *
+ * Purpose: replace all occurrences of substr with replacement in string     *
+ *                                                                            *
+ * Return value: newly allocated string with replacements made               *
+ *                                                                            *
+ ******************************************************************************/
+static char *string_replace(const char *string, const char *substr, const char *replacement)
+{
+	char *result, *p;
+	size_t len_substr = strlen(substr);
+	size_t len_replacement = strlen(replacement);
+	size_t count = 0, result_size;
+	const char *tmp = string;
+
+	/* Count occurrences of substr */
+	while ((tmp = strstr(tmp, substr)) != NULL)
+	{
+		count++;
+		tmp += len_substr;
+	}
+
+	/* Allocate result buffer */
+	result_size = strlen(string) + count * (len_replacement - len_substr) + 1;
+	result = malloc(result_size);
+	if (result == NULL)
+		return NULL;
+
+	/* Perform replacement */
+	p = result;
+	while (*string)
+	{
+		if (strncmp(string, substr, len_substr) == 0)
+		{
+			memcpy(p, replacement, len_replacement);
+			p += len_replacement;
+			string += len_substr;
+		}
+		else
+		{
+			*p++ = *string++;
+		}
+	}
+	*p = '\0';
+
+	return result;
+}
+
 ZBX_METRIC      *zbx_module_item_list()
 {
         zabbix_log(LOG_LEVEL_DEBUG, "In zbx_module_item_list()");
@@ -149,11 +198,20 @@ const char*  zbx_module_docker_socket_query(char *query, int stream)
         struct sockaddr_un address;
         int sock, nbytes;
         size_t addr_length;
-        char buffer[buffer_size+1];
+        char *buffer;
         char *response_substr, *response, *empty="", *message = NULL, *temp1, *temp2;
+        
+        buffer = malloc(buffer_size + 1);
+        if (buffer == NULL)
+        {
+            zabbix_log(LOG_LEVEL_WARNING, "Cannot allocate buffer for socket communication");
+            return empty;
+        }
+        
         if ((sock = socket(PF_UNIX, SOCK_STREAM, 0)) < 0)
         {
             zabbix_log(LOG_LEVEL_WARNING, "Cannot create socket for docker's communication");
+            free(buffer);
             return empty;
         }
         address.sun_family = AF_UNIX;
@@ -162,6 +220,7 @@ const char*  zbx_module_docker_socket_query(char *query, int stream)
         if (connect(sock, (struct sockaddr *) &address, addr_length))
         {
             zabbix_log(LOG_LEVEL_WARNING, "Cannot connect to standard docker's socket /var/run/docker.sock");
+            free(buffer);
             return empty;
         }
 
@@ -185,6 +244,7 @@ const char*  zbx_module_docker_socket_query(char *query, int stream)
         if (message == NULL)
         {
             zabbix_log(LOG_LEVEL_WARNING, "Problem with allocating memory for Docker answer");
+            free(buffer);
             return empty;
         }
         strcat(message, "");
@@ -195,6 +255,7 @@ const char*  zbx_module_docker_socket_query(char *query, int stream)
             if (message == NULL)
             {
                 zabbix_log(LOG_LEVEL_WARNING, "Problem with allocating memory");
+                free(buffer);
                 return empty;
             }
             strcat(message, buffer);
@@ -208,6 +269,7 @@ const char*  zbx_module_docker_socket_query(char *query, int stream)
             }
         }
         close(sock);
+        free(buffer);
         // remove http header
         if ((response_substr = strstr(message, "\r\n\r\n")))
         {
@@ -331,7 +393,7 @@ struct inspect_result     zbx_module_docker_inspect_exec(const char *container, 
         if (socket_api == 0 && zbx_docker_api_detect() == 0)
         {
             zabbix_log(LOG_LEVEL_DEBUG, "Docker's socket API is not available");
-            iresult.value = zbx_strdup(NULL, "Docker's socket API is not available");
+            iresult.value = zbx_strdup(NULL, NULL, "Docker's socket API is not available");
             iresult.return_code = SYSINFO_RET_FAIL;
             return iresult;
         }
@@ -339,7 +401,7 @@ struct inspect_result     zbx_module_docker_inspect_exec(const char *container, 
         if (container == NULL || param1 == NULL)
         {
                 zabbix_log(LOG_LEVEL_ERR, "Invalid number of parameters: %d",  (container != NULL) + (param1 != NULL));
-                iresult.value = zbx_strdup(NULL, "Invalid number of parameters");
+                iresult.value = zbx_strdup(NULL, NULL, "Invalid number of parameters");
                 iresult.return_code = SYSINFO_RET_FAIL;
                 return iresult;
         }
@@ -362,7 +424,7 @@ struct inspect_result     zbx_module_docker_inspect_exec(const char *container, 
         if(strcmp(answer, "") == 0)
         {
             zabbix_log(LOG_LEVEL_DEBUG, "docker.inspect is not available at the moment - some problem with Docker's socket API");
-            iresult.value = zbx_strdup(NULL, "docker.inspect is not available at the moment - some problem with Docker's socket API");
+            iresult.value = zbx_strdup(NULL, NULL, "docker.inspect is not available at the moment - some problem with Docker's socket API");
             iresult.return_code = SYSINFO_RET_FAIL;
             return iresult;
         }
@@ -422,7 +484,7 @@ struct inspect_result     zbx_module_docker_inspect_exec(const char *container, 
 
                                            const char    *arg4 = param3;
                                            char *tofree, *string, *selector;
-                                           tofree = string = strdup(arg4);
+                                           tofree = string = zbx_strdup(NULL, arg4);
 
                                            // hacking: Marathon MESOS_TASK_ID, Chronos - mesos_task_id
                                            // docker.inspect[cid,Config,Env,MESOS_TASK_ID=|mesos_task_id=]
@@ -434,7 +496,7 @@ struct inspect_result     zbx_module_docker_inspect_exec(const char *container, 
                                                     value += strlen(selector);
 
                                                     zabbix_log(LOG_LEVEL_DEBUG, "Item [%s][%s][%s] found in the received JSON object: %s", param1, param2, selector, value);
-                                                    iresult.value = zbx_strdup(NULL, value);
+                                                    iresult.value = zbx_strdup(NULL, NULL, value);
                                                     iresult.return_code = SYSINFO_RET_OK;
                                                     free((void*) answer);
                                                     free((void*) tofree);
@@ -475,7 +537,7 @@ struct inspect_result     zbx_module_docker_inspect_exec(const char *container, 
                                     free((void*) answer);
                                     const char *api_value3 = json_string_value(jp_data4);
                                     zabbix_log(LOG_LEVEL_DEBUG, "Item [%s][%s][%s] found in the received JSON object: %s", param1, param2, param3, api_value3);
-                                    iresult.value = zbx_strdup(NULL, api_value3);
+                                    iresult.value = zbx_strdup(NULL, NULL, api_value3);
                                     iresult.return_code = SYSINFO_RET_OK;
                                     json_decref(jp_data);
                                     return iresult;
@@ -484,7 +546,7 @@ struct inspect_result     zbx_module_docker_inspect_exec(const char *container, 
                                 free((void*) answer);
                                 const char *api_value2 = json_string_value(jp_data3);
                                 zabbix_log(LOG_LEVEL_DEBUG, "Item [%s][%s] found in the received JSON object: %s", param1, param2, api_value2);
-                                iresult.value = zbx_strdup(NULL, api_value2);
+                                iresult.value = zbx_strdup(NULL, NULL, api_value2);
                                 iresult.return_code = SYSINFO_RET_OK;
                                 json_decref(jp_data);
                                 return iresult;
@@ -503,7 +565,7 @@ struct inspect_result     zbx_module_docker_inspect_exec(const char *container, 
                 free((void*) answer);
                 const char *api_value = json_string_value(jp_data2);
                 zabbix_log(LOG_LEVEL_DEBUG, "Item [%s] found in the received JSON object: %s", param1, api_value);
-                iresult.value = zbx_strdup(NULL, api_value);
+                iresult.value = zbx_strdup(NULL, NULL, api_value);
                 iresult.return_code = SYSINFO_RET_OK;
                 json_decref(jp_data);
                 return iresult;
@@ -511,7 +573,7 @@ struct inspect_result     zbx_module_docker_inspect_exec(const char *container, 
         }
         free((void*) answer);
         json_decref(jp_data);
-        iresult.value = zbx_strdup(NULL, "");
+        iresult.value = zbx_strdup(NULL, NULL, "");
         iresult.return_code = SYSINFO_RET_OK;
         return iresult;
 }
@@ -532,7 +594,7 @@ int zbx_module_docker_port_discovery(AGENT_REQUEST * request, AGENT_RESULT * res
 
   if (2 < request->nparam || 0 == request->nparam) {
     zabbix_log(LOG_LEVEL_ERR, "Invalid number of parameters: %d", request->nparam);
-    SET_MSG_RESULT(result, zbx_strdup(NULL, "Invalid number of parameters"));
+    SET_MSG_RESULT(result, zbx_strdup(NULL, NULL, "Invalid number of parameters"));
     return SYSINFO_RET_FAIL;
   }
 
@@ -619,7 +681,7 @@ char*  zbx_module_docker_get_fci(char *fci)
         if (fci[0] != '/')
         {
             zabbix_log(LOG_LEVEL_DEBUG, "Original full container id will be used");
-            return zbx_strdup(NULL, fci);
+            return zbx_strdup(NULL, NULL, fci);
         }
 
         // Docker API query - docker.inspect[fci,Id]
@@ -633,7 +695,7 @@ char*  zbx_module_docker_get_fci(char *fci)
         } else {
             zabbix_log(LOG_LEVEL_DEBUG, "Default fci will be used, because zbx_module_docker_inspect_exec FAIL: %s", iresult.value);
             free(iresult.value);
-            return zbx_strdup(NULL, fci);
+            return zbx_strdup(NULL, NULL, fci);
         }
 }
 
@@ -683,7 +745,7 @@ int     zbx_docker_dir_detect()
                 }
                 zabbix_log(LOG_LEVEL_DEBUG, "Detected docker stat directory: %s", stat_dir);
 
-                pclose(fp);
+                fclose(fp);
 
                 char *cgroup = "cpuset/";
                 tdriver = drivers;
@@ -734,7 +796,7 @@ int     zbx_docker_dir_detect()
                 return SYSINFO_RET_FAIL;
             }
         }
-        pclose(fp);
+        fclose(fp);
         zabbix_log(LOG_LEVEL_DEBUG, "Cannot detect docker stat directory");
         return SYSINFO_RET_FAIL;
 }
@@ -756,14 +818,14 @@ int     zbx_module_docker_up(AGENT_REQUEST *request, AGENT_RESULT *result)
         if (1 != request->nparam)
         {
                 zabbix_log(LOG_LEVEL_ERR, "Invalid number of parameters: %d",  request->nparam);
-                SET_MSG_RESULT(result, strdup("Invalid number of parameters"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, "Invalid number of parameters"));
                 return SYSINFO_RET_FAIL;
         }
 
         if (stat_dir == NULL || driver == NULL)
         {
                 zabbix_log(LOG_LEVEL_DEBUG, "docker.up check is not available at the moment - no stat directory");
-                SET_MSG_RESULT(result, zbx_strdup(NULL, "docker.up check is not available at the moment - no stat directory"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, NULL, "docker.up check is not available at the moment - no stat directory"));
                 return SYSINFO_RET_FAIL;
         }
 
@@ -772,7 +834,7 @@ int     zbx_module_docker_up(AGENT_REQUEST *request, AGENT_RESULT *result)
                 if (zbx_docker_dir_detect() == SYSINFO_RET_FAIL)
                 {
                     zabbix_log(LOG_LEVEL_DEBUG, "docker.up check is not available at the moment - no cpu_cgroup directory");
-                    SET_MSG_RESULT(result, zbx_strdup(NULL, "docker.up check is not available at the moment - no cpu_cgroup directory"));
+                    SET_MSG_RESULT(result, zbx_strdup(NULL, NULL, "docker.up check is not available at the moment - no cpu_cgroup directory"));
                     return SYSINFO_RET_FAIL;
                 }
         }
@@ -815,7 +877,7 @@ int     zbx_module_docker_up(AGENT_REQUEST *request, AGENT_RESULT *result)
                 SET_UI64_RESULT(result, 0);
                 return SYSINFO_RET_OK;
         }
-        zbx_fclose(file);
+        fclose(file);
         zabbix_log(LOG_LEVEL_DEBUG, "Can open metric file: '%s', container is running", filename);
         free(filename);
         SET_UI64_RESULT(result, 1);
@@ -843,14 +905,14 @@ int     zbx_module_docker_dev(AGENT_REQUEST *request, AGENT_RESULT *result)
         if (3 != request->nparam)
         {
                 zabbix_log(LOG_LEVEL_ERR, "Invalid number of parameters: %d",  request->nparam);
-                SET_MSG_RESULT(result, strdup("Invalid number of parameters"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, "Invalid number of parameters"));
                 return SYSINFO_RET_FAIL;
         }
 
         if (stat_dir == NULL || driver == NULL)
         {
                 zabbix_log(LOG_LEVEL_DEBUG, "docker.dev metrics are not available at the moment - no stat directory");
-                SET_MSG_RESULT(result, zbx_strdup(NULL, "docker.dev metrics are not available at the moment - no stat directory"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, NULL, "docker.dev metrics are not available at the moment - no stat directory"));
                 return SYSINFO_RET_FAIL;
         }
 
@@ -895,7 +957,7 @@ int     zbx_module_docker_dev(AGENT_REQUEST *request, AGENT_RESULT *result)
                 free(container);
                 free(stat_file);
                 free(filename);
-                SET_MSG_RESULT(result, strdup("Cannot open stat file, maybe CONFIG_DEBUG_BLK_CGROUP is not enabled"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, "Cannot open stat file, maybe CONFIG_DEBUG_BLK_CGROUP is not enabled"));
                 return SYSINFO_RET_FAIL;
         }
 
@@ -923,7 +985,7 @@ int     zbx_module_docker_dev(AGENT_REQUEST *request, AGENT_RESULT *result)
                 ret = SYSINFO_RET_OK;
                 break;
         }
-        zbx_fclose(file);
+        fclose(file);
 
         free(container);
         free(stat_file);
@@ -931,7 +993,7 @@ int     zbx_module_docker_dev(AGENT_REQUEST *request, AGENT_RESULT *result)
         free(metric2);
 
         if (SYSINFO_RET_FAIL == ret)
-                SET_MSG_RESULT(result, zbx_strdup(NULL, "Cannot find a line with requested metric in blkio file"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, NULL, "Cannot find a line with requested metric in blkio file"));
 
         return ret;
 }
@@ -957,14 +1019,14 @@ int     zbx_module_docker_mem(AGENT_REQUEST *request, AGENT_RESULT *result)
         if (2 != request->nparam)
         {
                 zabbix_log(LOG_LEVEL_ERR, "Invalid number of parameters: %d",  request->nparam);
-                SET_MSG_RESULT(result, strdup("Invalid number of parameters"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, "Invalid number of parameters"));
                 return SYSINFO_RET_FAIL;
         }
 
         if (stat_dir == NULL || driver == NULL)
         {
                 zabbix_log(LOG_LEVEL_DEBUG, "docker.mem metrics are not available at the moment - no stat directory");
-                SET_MSG_RESULT(result, zbx_strdup(NULL, "docker.mem metrics are not available at the moment - no stat directory"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, NULL, "docker.mem metrics are not available at the moment - no stat directory"));
                 return SYSINFO_RET_FAIL;
         }
 
@@ -1006,7 +1068,7 @@ int     zbx_module_docker_mem(AGENT_REQUEST *request, AGENT_RESULT *result)
                 zabbix_log(LOG_LEVEL_ERR, "Cannot open metric file: '%s'", filename);
                 free(container);
                 free(filename);
-                SET_MSG_RESULT(result, strdup("Cannot open memory.stat file"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, "Cannot open memory.stat file"));
                 return SYSINFO_RET_FAIL;
         }
 
@@ -1030,14 +1092,14 @@ int     zbx_module_docker_mem(AGENT_REQUEST *request, AGENT_RESULT *result)
                 ret = SYSINFO_RET_OK;
                 break;
         }
-        zbx_fclose(file);
+        fclose(file);
 
         free(container);
         free(filename);
         free(metric2);
 
         if (SYSINFO_RET_FAIL == ret)
-                SET_MSG_RESULT(result, zbx_strdup(NULL, "Cannot find a line with requested metric in memory.stat file"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, NULL, "Cannot find a line with requested metric in memory.stat file"));
 
         return ret;
 }
@@ -1064,14 +1126,14 @@ int     zbx_module_docker_cpu(AGENT_REQUEST *request, AGENT_RESULT *result)
         if (2 != request->nparam)
         {
                 zabbix_log(LOG_LEVEL_ERR, "Invalid number of parameters: %d",  request->nparam);
-                SET_MSG_RESULT(result, strdup("Invalid number of parameters"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, "Invalid number of parameters"));
                 return SYSINFO_RET_FAIL;
         }
 
         if (stat_dir == NULL || driver == NULL)
         {
                 zabbix_log(LOG_LEVEL_DEBUG, "docker.cpu metrics are not available at the moment - no stat directory");
-                SET_MSG_RESULT(result, zbx_strdup(NULL, "docker.cpu metrics are not available at the moment - no stat directory"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, NULL, "docker.cpu metrics are not available at the moment - no stat directory"));
                 return SYSINFO_RET_FAIL;
         }
 
@@ -1080,7 +1142,7 @@ int     zbx_module_docker_cpu(AGENT_REQUEST *request, AGENT_RESULT *result)
                 if (zbx_docker_dir_detect() == SYSINFO_RET_FAIL)
                 {
                     zabbix_log(LOG_LEVEL_DEBUG, "docker.cpu check is not available at the moment - no cpu_cgroup directory");
-                    SET_MSG_RESULT(result, zbx_strdup(NULL, "docker.cpu check is not available at the moment - no cpu_cgroup directory"));
+                    SET_MSG_RESULT(result, zbx_strdup(NULL, NULL, "docker.cpu check is not available at the moment - no cpu_cgroup directory"));
                     return SYSINFO_RET_FAIL;
                 }
         }
@@ -1157,12 +1219,12 @@ int     zbx_module_docker_cpu(AGENT_REQUEST *request, AGENT_RESULT *result)
                 ret = SYSINFO_RET_OK;
         }
 
-        zbx_fclose(file);
+        fclose(file);
         free(filename);
         free(metric2);
 
         if (SYSINFO_RET_FAIL == ret) {
-                SET_MSG_RESULT(result, zbx_strdup(NULL, "Cannot find a line with requested metric in cpuacct.stat/cpu.stat file"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, NULL, "Cannot find a line with requested metric in cpuacct.stat/cpu.stat file"));
         } else {
                 // normalize CPU usage by using number of online CPUs - only tick metrics
                 if ((strcmp(metric, "user") == 0 || strcmp(metric, "system") == 0 || strcmp(metric, "total") == 0) && (1 < (cpu_num = sysconf(_SC_NPROCESSORS_ONLN))))
@@ -1197,7 +1259,7 @@ int     zbx_module_docker_net(AGENT_REQUEST *request, AGENT_RESULT *result)
         if(geteuid() != 0)
         {
             zabbix_log(LOG_LEVEL_ERR, "docker.net metrics requires root permissions");
-            SET_MSG_RESULT(result, zbx_strdup(NULL, "docker.net metrics requires root permissions"));
+            SET_MSG_RESULT(result, zbx_strdup(NULL, NULL, "docker.net metrics requires root permissions"));
             return SYSINFO_RET_FAIL;
         }
         struct stat st = {0};
@@ -1207,7 +1269,7 @@ int     zbx_module_docker_net(AGENT_REQUEST *request, AGENT_RESULT *result)
             if(mkdir("/var/run/netns", 0755) != 0)
             {
                 zabbix_log(LOG_LEVEL_ERR, "Cannot create /var/run/netns");
-                SET_MSG_RESULT(result, strdup("Cannot create /var/run/netns"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, "Cannot create /var/run/netns"));
                 return SYSINFO_RET_FAIL;
             }
         }
@@ -1265,7 +1327,7 @@ int     zbx_module_docker_net(AGENT_REQUEST *request, AGENT_RESULT *result)
                 free(filename);
                 free(netns);
                 free(filename2);
-                SET_MSG_RESULT(result, strdup("Cannot open Docker tasks file"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, "Cannot open Docker tasks file"));
                 return SYSINFO_RET_FAIL;
             }
 
@@ -1277,7 +1339,7 @@ int     zbx_module_docker_net(AGENT_REQUEST *request, AGENT_RESULT *result)
                 zabbix_log(LOG_LEVEL_DEBUG, "First task for container %s: %s", container, first_task);
                 break;
             }
-            zbx_fclose(file);
+            fclose(file);
             free(container);
             free(filename2);
 
@@ -1303,7 +1365,7 @@ int     zbx_module_docker_net(AGENT_REQUEST *request, AGENT_RESULT *result)
                 free(netns_source);
                 free(filename);
                 free(netns);
-                SET_MSG_RESULT(result, strdup("Cannot create netns symlink"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, "Cannot create netns symlink"));
                 return SYSINFO_RET_FAIL;
             }
             free(netns_source);
@@ -1326,7 +1388,7 @@ int     zbx_module_docker_net(AGENT_REQUEST *request, AGENT_RESULT *result)
         if (fp == NULL)
         {
             zabbix_log(LOG_LEVEL_WARNING, "Cannot execute netns command");
-            SET_MSG_RESULT(result, zbx_strdup(NULL, "Cannot execute netns command"));
+            SET_MSG_RESULT(result, zbx_strdup(NULL, NULL, "Cannot execute netns command"));
             return SYSINFO_RET_FAIL;
         }
 
@@ -1351,7 +1413,7 @@ int     zbx_module_docker_net(AGENT_REQUEST *request, AGENT_RESULT *result)
             if(metric_pos == INT_MAX)
             {
                 zabbix_log(LOG_LEVEL_DEBUG, "Not found metric %s", metric);
-                SET_MSG_RESULT(result, zbx_strdup(NULL, "Not found net metric"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, NULL, "Not found net metric"));
                 return SYSINFO_RET_FAIL;
             }
 
@@ -1745,7 +1807,7 @@ int     zbx_module_docker_discovery_extended(AGENT_REQUEST *request, AGENT_RESUL
                         break;
                     }
 
-                    names = zbx_strdup(NULL, names);
+                    names = zbx_strdup(NULL, NULL, names);
                 } else {
                     names = json_dumps(jp_data2, 0);
                 }
@@ -1884,14 +1946,14 @@ int     zbx_module_docker_info(AGENT_REQUEST *request, AGENT_RESULT *result)
         if (socket_api == 0 && zbx_docker_api_detect() == 0)
         {
             zabbix_log(LOG_LEVEL_DEBUG, "Docker's socket API is not avalaible");
-            SET_MSG_RESULT(result, strdup("Docker's socket API is not avalaible"));
+            SET_MSG_RESULT(result, zbx_strdup(NULL, "Docker's socket API is not avalaible"));
             return SYSINFO_RET_FAIL;
         }
 
         if (1 > request->nparam)
         {
                 zabbix_log(LOG_LEVEL_ERR, "Invalid number of parameters: %d",  request->nparam);
-                SET_MSG_RESULT(result, strdup("Invalid number of parameters"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, "Invalid number of parameters"));
                 return SYSINFO_RET_FAIL;
         }
 
@@ -1901,7 +1963,7 @@ int     zbx_module_docker_info(AGENT_REQUEST *request, AGENT_RESULT *result)
         if(strcmp(answer, "") == 0)
         {
             zabbix_log(LOG_LEVEL_DEBUG, "docker.info is not available at the moment - some problem with Docker's socket API");
-            SET_MSG_RESULT(result, strdup("docker.info is not available at the moment - some problem with Docker's socket API"));
+            SET_MSG_RESULT(result, zbx_strdup(NULL, "docker.info is not available at the moment - some problem with Docker's socket API"));
             return SYSINFO_RET_FAIL;
         }
 
@@ -1916,7 +1978,7 @@ int     zbx_module_docker_info(AGENT_REQUEST *request, AGENT_RESULT *result)
             return SYSINFO_RET_FAIL;
         } else {
             zabbix_log(LOG_LEVEL_DEBUG, "Item [%s] found in the received JSON object: %s", info, api_value);
-            SET_STR_RESULT(result, zbx_strdup(NULL, api_value));
+            SET_STR_RESULT(result, zbx_strdup(NULL, NULL, api_value));
             free((void*) answer);
             json_decref(jp_data);
             return SYSINFO_RET_OK;
@@ -1942,14 +2004,14 @@ int     zbx_module_docker_stats(AGENT_REQUEST *request, AGENT_RESULT *result)
         if (socket_api == 0 && zbx_docker_api_detect() == 0)
         {
             zabbix_log(LOG_LEVEL_DEBUG, "Docker's socket API is not avalaible");
-            SET_MSG_RESULT(result, strdup("Docker's socket API is not avalaible"));
+            SET_MSG_RESULT(result, zbx_strdup(NULL, "Docker's socket API is not avalaible"));
             return SYSINFO_RET_FAIL;
         }
 
         if (1 >= request->nparam)
         {
                 zabbix_log(LOG_LEVEL_ERR, "Invalid number of parameters: %d",  request->nparam);
-                SET_MSG_RESULT(result, strdup("Invalid number of parameters"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, "Invalid number of parameters"));
                 return SYSINFO_RET_FAIL;
         }
 
@@ -1972,7 +2034,7 @@ int     zbx_module_docker_stats(AGENT_REQUEST *request, AGENT_RESULT *result)
         if(strcmp(answer, "") == 0)
         {
             zabbix_log(LOG_LEVEL_DEBUG, "docker.stats is not available at the moment - some problem with Docker's socket API");
-            SET_MSG_RESULT(result, strdup("docker.stats is not available at the moment - some problem with Docker's socket API"));
+            SET_MSG_RESULT(result, zbx_strdup(NULL, "docker.stats is not available at the moment - some problem with Docker's socket API"));
             return SYSINFO_RET_FAIL;
         }
 
@@ -2045,7 +2107,7 @@ int     zbx_module_docker_stats(AGENT_REQUEST *request, AGENT_RESULT *result)
                         } else {
                             const char *api_value2 = json_string_value(jp_data3);
                             zabbix_log(LOG_LEVEL_DEBUG, "Item [%s][%s] found in the received JSON object: %s", param1, param2, api_value2);
-                            SET_STR_RESULT(result, zbx_strdup(NULL, api_value2));
+                            SET_STR_RESULT(result, zbx_strdup(NULL, NULL, api_value2));
                             free((void*) answer);
                             json_decref(jp_data);
                             return SYSINFO_RET_OK;
@@ -2061,7 +2123,7 @@ int     zbx_module_docker_stats(AGENT_REQUEST *request, AGENT_RESULT *result)
             } else {
                     const char* api_value = json_string_value(jp_data2);
                     zabbix_log(LOG_LEVEL_DEBUG, "Item [%s] found in the received JSON object: %s", param1, api_value);
-                    SET_STR_RESULT(result, zbx_strdup(NULL, api_value));
+                    SET_STR_RESULT(result, zbx_strdup(NULL, NULL, api_value));
                     free((void*) answer);
                     json_decref(jp_data);
                     return SYSINFO_RET_OK;
@@ -2090,7 +2152,7 @@ int     zbx_module_docker_cstatus(AGENT_REQUEST *request, AGENT_RESULT *result)
         if (socket_api == 0 && zbx_docker_api_detect() == 0)
         {
             zabbix_log(LOG_LEVEL_DEBUG, "Docker's socket API is not avalaible");
-            SET_MSG_RESULT(result, strdup("Docker's socket API is not avalaible"));
+            SET_MSG_RESULT(result, zbx_strdup(NULL, "Docker's socket API is not avalaible"));
             return SYSINFO_RET_FAIL;
         }
 
@@ -2098,7 +2160,7 @@ int     zbx_module_docker_cstatus(AGENT_REQUEST *request, AGENT_RESULT *result)
         if (1 > request->nparam)
         {
                 zabbix_log(LOG_LEVEL_ERR, "Invalid number of parameters: %d",  request->nparam);
-                SET_MSG_RESULT(result, strdup("Invalid number of parameters"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, "Invalid number of parameters"));
                 return SYSINFO_RET_FAIL;
         }
 
@@ -2114,7 +2176,7 @@ int     zbx_module_docker_cstatus(AGENT_REQUEST *request, AGENT_RESULT *result)
             if(strcmp(answer, "") == 0)
             {
                 zabbix_log(LOG_LEVEL_DEBUG, "docker.cstatus is not available at the moment - some problem with Docker's socket API");
-                SET_MSG_RESULT(result, strdup("docker.cstatus is not available at the moment - some problem with Docker's socket API"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, "docker.cstatus is not available at the moment - some problem with Docker's socket API"));
                 return SYSINFO_RET_FAIL;
             }
             if(strcmp(answer, "[]\n") != 0)
@@ -2139,7 +2201,7 @@ int     zbx_module_docker_cstatus(AGENT_REQUEST *request, AGENT_RESULT *result)
                 if(strcmp(answer, "") == 0)
                 {
                     zabbix_log(LOG_LEVEL_DEBUG, "docker.cstatus is not available at the moment - some problem with Docker's socket API");
-                    SET_MSG_RESULT(result, strdup("docker.cstatus is not available at the moment - some problem with Docker's socket API"));
+                    SET_MSG_RESULT(result, zbx_strdup(NULL, "docker.cstatus is not available at the moment - some problem with Docker's socket API"));
                     return SYSINFO_RET_FAIL;
                 }
                 if(strcmp(answer, "[]\n") != 0)
@@ -2155,7 +2217,7 @@ int     zbx_module_docker_cstatus(AGENT_REQUEST *request, AGENT_RESULT *result)
                 if(strcmp(answer2, "") == 0)
                 {
                     zabbix_log(LOG_LEVEL_DEBUG, "docker.cstatus is not available at the moment - some problem with Docker's socket API");
-                    SET_MSG_RESULT(result, strdup("docker.cstatus is not available at the moment - some problem with Docker's socket API"));
+                    SET_MSG_RESULT(result, zbx_strdup(NULL, "docker.cstatus is not available at the moment - some problem with Docker's socket API"));
                     return SYSINFO_RET_FAIL;
                 }
                 if(strcmp(answer2, "[]\n") != 0)
@@ -2177,7 +2239,7 @@ int     zbx_module_docker_cstatus(AGENT_REQUEST *request, AGENT_RESULT *result)
                     if(strcmp(answer, "") == 0)
                     {
                         zabbix_log(LOG_LEVEL_DEBUG, "docker.cstatus is not available at the moment - some problem with Docker's socket API");
-                        SET_MSG_RESULT(result, strdup("docker.cstatus is not available at the moment - some problem with Docker's socket API"));
+                        SET_MSG_RESULT(result, zbx_strdup(NULL, "docker.cstatus is not available at the moment - some problem with Docker's socket API"));
                         return SYSINFO_RET_FAIL;
                     }
 
@@ -2231,7 +2293,7 @@ int     zbx_module_docker_cstatus(AGENT_REQUEST *request, AGENT_RESULT *result)
                         if(strcmp(answer, "") == 0)
                         {
                             zabbix_log(LOG_LEVEL_DEBUG, "docker.cstatus is not available at the moment - some problem with Docker's socket API");
-                            SET_MSG_RESULT(result, strdup("docker.cstatus is not available at the moment - some problem with Docker's socket API"));
+                            SET_MSG_RESULT(result, zbx_strdup(NULL, "docker.cstatus is not available at the moment - some problem with Docker's socket API"));
                             return SYSINFO_RET_FAIL;
                         }
                         if(strcmp(answer, "[]\n") != 0)
@@ -2253,7 +2315,7 @@ int     zbx_module_docker_cstatus(AGENT_REQUEST *request, AGENT_RESULT *result)
                             if(strcmp(answer, "") == 0)
                             {
                                 zabbix_log(LOG_LEVEL_DEBUG, "docker.cstatus is not available at the moment - some problem with Docker's socket API");
-                                SET_MSG_RESULT(result, strdup("docker.cstatus is not available at the moment - some problem with Docker's socket API"));
+                                SET_MSG_RESULT(result, zbx_strdup(NULL, "docker.cstatus is not available at the moment - some problem with Docker's socket API"));
                                 return SYSINFO_RET_FAIL;
                             }
 
@@ -2300,7 +2362,7 @@ int     zbx_module_docker_cstatus(AGENT_REQUEST *request, AGENT_RESULT *result)
 
                         } else {
                             zabbix_log(LOG_LEVEL_WARNING, "Not defined container status: %s",  state);
-                            SET_MSG_RESULT(result, strdup("Not defined container status"));
+                            SET_MSG_RESULT(result, zbx_strdup(NULL, "Not defined container status"));
                             return SYSINFO_RET_FAIL;
                         }
                     }
@@ -2328,14 +2390,14 @@ int     zbx_module_docker_istatus(AGENT_REQUEST *request, AGENT_RESULT *result)
         if (socket_api == 0 && zbx_docker_api_detect() == 0)
         {
             zabbix_log(LOG_LEVEL_DEBUG, "Docker's socket API is not avalaible");
-            SET_MSG_RESULT(result, strdup("Docker's socket API is not avalaible"));
+            SET_MSG_RESULT(result, zbx_strdup(NULL, "Docker's socket API is not avalaible"));
             return SYSINFO_RET_FAIL;
         }
 
         if (1 != request->nparam)
         {
                 zabbix_log(LOG_LEVEL_ERR, "Invalid number of parameters: %d",  request->nparam);
-                SET_MSG_RESULT(result, strdup("Invalid number of parameters"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, "Invalid number of parameters"));
                 return SYSINFO_RET_FAIL;
         }
 
@@ -2351,7 +2413,7 @@ int     zbx_module_docker_istatus(AGENT_REQUEST *request, AGENT_RESULT *result)
             if(strcmp(answer, "") == 0)
             {
                 zabbix_log(LOG_LEVEL_DEBUG, "docker.istatus is not available at the moment - some problem with Docker's socket API");
-                SET_MSG_RESULT(result, strdup("docker.istatus is not available at the moment - some problem with Docker's socket API"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, "docker.istatus is not available at the moment - some problem with Docker's socket API"));
                 return SYSINFO_RET_FAIL;
             }
             if(strcmp(answer, "[]\n") != 0)
@@ -2370,7 +2432,7 @@ int     zbx_module_docker_istatus(AGENT_REQUEST *request, AGENT_RESULT *result)
             if(strcmp(answer, "") == 0)
             {
                 zabbix_log(LOG_LEVEL_DEBUG, "docker.istatus is not available at the moment - some problem with Docker's socket API");
-                SET_MSG_RESULT(result, strdup("docker.istatus is not available at the moment - some problem with Docker's socket API"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, "docker.istatus is not available at the moment - some problem with Docker's socket API"));
                 return SYSINFO_RET_FAIL;
             }
             if(strcmp(answer, "[]\n") != 0)
@@ -2386,7 +2448,7 @@ int     zbx_module_docker_istatus(AGENT_REQUEST *request, AGENT_RESULT *result)
         }
 
         zabbix_log(LOG_LEVEL_DEBUG, "Not supported image state: %s", state);
-        SET_MSG_RESULT(result, strdup("Not supported image state"));
+        SET_MSG_RESULT(result, zbx_strdup(NULL, "Not supported image state"));
         return SYSINFO_RET_FAIL;
 }
 
@@ -2408,14 +2470,14 @@ int     zbx_module_docker_vstatus(AGENT_REQUEST *request, AGENT_RESULT *result)
         if (socket_api == 0 && zbx_docker_api_detect() == 0)
         {
             zabbix_log(LOG_LEVEL_DEBUG, "Docker's socket API is not avalaible");
-            SET_MSG_RESULT(result, strdup("Docker's socket API is not avalaible"));
+            SET_MSG_RESULT(result, zbx_strdup(NULL, "Docker's socket API is not avalaible"));
             return SYSINFO_RET_FAIL;
         }
 
         if (1 != request->nparam)
         {
                 zabbix_log(LOG_LEVEL_ERR, "Invalid number of parameters: %d",  request->nparam);
-                SET_MSG_RESULT(result, strdup("Invalid number of parameters"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, "Invalid number of parameters"));
                 return SYSINFO_RET_FAIL;
         }
 
@@ -2429,14 +2491,14 @@ int     zbx_module_docker_vstatus(AGENT_REQUEST *request, AGENT_RESULT *result)
             if(strcmp(answer, "") == 0)
             {
                 zabbix_log(LOG_LEVEL_DEBUG, "docker.vstatus is not available at the moment - some problem with Docker's socket API");
-                SET_MSG_RESULT(result, strdup("docker.vstatus is not available at the moment - some problem with Docker's socket API"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, "docker.vstatus is not available at the moment - some problem with Docker's socket API"));
                 return SYSINFO_RET_FAIL;
             }
 
             if(strncmp(answer, "404 ", strlen("404 ")) == 0)
             {
                 zabbix_log(LOG_LEVEL_DEBUG, "docker.vstatus is not available for your Docker version");
-                SET_MSG_RESULT(result, strdup("docker.vstatus is not available for your Docker version"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, "docker.vstatus is not available for your Docker version"));
                 return SYSINFO_RET_FAIL;
             }
 
@@ -2465,14 +2527,14 @@ int     zbx_module_docker_vstatus(AGENT_REQUEST *request, AGENT_RESULT *result)
             if(strcmp(answer, "") == 0)
             {
                 zabbix_log(LOG_LEVEL_DEBUG, "docker.vstatus is not available at the moment - some problem with Docker's socket API");
-                SET_MSG_RESULT(result, strdup("docker.vstatus is not available at the moment - some problem with Docker's socket API"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, "docker.vstatus is not available at the moment - some problem with Docker's socket API"));
                 return SYSINFO_RET_FAIL;
             }
 
             if(strncmp(answer, "404 ", strlen("404 ")) == 0)
             {
                 zabbix_log(LOG_LEVEL_DEBUG, "docker.vstatus is not available for your Docker version");
-                SET_MSG_RESULT(result, strdup("docker.vstatus is not available for your Docker version"));
+                SET_MSG_RESULT(result, zbx_strdup(NULL, "docker.vstatus is not available for your Docker version"));
                 return SYSINFO_RET_FAIL;
             }
 
@@ -2498,7 +2560,7 @@ int     zbx_module_docker_vstatus(AGENT_REQUEST *request, AGENT_RESULT *result)
         }
 
         zabbix_log(LOG_LEVEL_DEBUG, "Not supported volume state: %s", state);
-        SET_MSG_RESULT(result, strdup("Not supported volume state"));
+        SET_MSG_RESULT(result, zbx_strdup(NULL, "Not supported volume state"));
         return SYSINFO_RET_FAIL;
 }
 
@@ -2516,6 +2578,6 @@ int     zbx_module_docker_vstatus(AGENT_REQUEST *request, AGENT_RESULT *result)
 int     zbx_module_docker_modver(AGENT_REQUEST *request, AGENT_RESULT *result)
 {
         zabbix_log(LOG_LEVEL_DEBUG, "In zbx_module_docker_modver()");
-        SET_STR_RESULT(result, zbx_strdup(NULL, m_version));
+        SET_STR_RESULT(result, zbx_strdup(NULL, NULL, m_version));
         return SYSINFO_RET_OK;
 }
